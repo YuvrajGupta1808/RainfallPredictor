@@ -6,8 +6,8 @@ from datetime import datetime
 from timezonefinder import TimezoneFinder
 
 from utils.nlp_service import parse_user_query, calculate_target_time
-from utils.weather_service import fetch_weather_data
-from utils.prediction_service import load_model, predict_rainfall
+from utils.weather_service import fetch_weather_data, fetch_daily_weather_data
+from utils.prediction_service import load_model, load_daily_model, predict_rainfall, predict_daily_rainfall
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
@@ -32,17 +32,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model at startup
+# Load models at startup
 model = None
+daily_model = None
 
 @app.on_event("startup")
 async def startup_event():
-    global model
+    global model, daily_model
     try:
         model = load_model("checkpoint_best.pt")
-        print("✓ Model loaded successfully")
+        print("✓ Hourly model loaded successfully")
     except Exception as e:
-        print(f"⚠ Warning: Could not load model: {e}")
+        print(f"⚠ Warning: Could not load hourly model: {e}")
+    
+    try:
+        daily_model = load_daily_model("daily_transformer_global.pt")
+        print("✓ Daily model loaded successfully")
+    except Exception as e:
+        print(f"⚠ Warning: Could not load daily model: {e}")
 
 
 class ChatRequest(BaseModel):
@@ -88,12 +95,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
         # Handle different intents
         if intent == "greeting":
             return ChatResponse(
-                response="Hello! I'm your rainfall prediction assistant. Ask me about weather and rainfall for any city, including future or past predictions. For example: 'Will it rain tomorrow in Tokyo?' or 'What was the weather yesterday in Paris?'"
+                response="Hello! I'm your rainfall prediction assistant with dual AI models:\n\n⏰ **Hourly Model** - Short-term predictions (next hour)\n📅 **Daily Model** - Next-day forecasts (tomorrow)\n\nI automatically choose the best model for your query. Ask me about weather and rainfall for any city! Examples:\n• 'Will it rain tomorrow in Tokyo?'\n• 'What's the weather in Paris now?'\n• 'Show me yesterday's rainfall in London'"
             )
         
         if intent == "help":
             return ChatResponse(
-                response="I can help you with:\n\n• Rainfall predictions for any city\n• Weather forecasts (next hour, tomorrow, etc.)\n• Historical weather data (yesterday, last week, etc.)\n• Location-based predictions\n\nJust ask naturally! Examples:\n- 'Will it rain in London tomorrow?'\n- 'What's the weather in Tokyo?'\n- 'Show me yesterday's rainfall in Paris'"
+                response="I can help you with:\n\n• Rainfall predictions for any city\n• Short-term forecasts (next hour) - Hourly Model\n• Next-day forecasts (tomorrow) - Daily Model\n• Historical weather data (yesterday, last week, etc.)\n• Location-based predictions\n\nJust ask naturally! Examples:\n- 'Will it rain in London tomorrow?' (uses daily model)\n- 'What's the weather in Tokyo?' (uses hourly model)\n- 'Show me yesterday's rainfall in Paris'\n\n💡 I automatically choose the best model based on your query!"
             )
         
         if intent == "info":
@@ -124,38 +131,86 @@ async def chat(request: ChatRequest) -> ChatResponse:
         # Calculate target time
         target_time = calculate_target_time(time_offset, timezone_str)
         
-        # Check if model is loaded
-        if model is None:
-            return ChatResponse(
-                response="Sorry, the prediction model is not available at the moment. Please try again later.",
-                location=location
-            )
+        # ============================================================================
+        # AUTOMATIC MODEL SELECTION based on time offset
+        # ============================================================================
+        # Use daily model for predictions >= 18 hours in the future (tomorrow queries)
+        # Use hourly model for short-term predictions (< 18 hours)
+        # 
+        # Reasoning:
+        # - "tomorrow" typically means 18-30 hours from now
+        # - Daily model is trained for next-day predictions (30 days -> next day)
+        # - Hourly model is trained for short-term (24 hours -> next hour)
+        # ============================================================================
         
-        # Fetch weather data
-        try:
-            weather_data, weather_df = await fetch_weather_data(
-                latitude=location["latitude"],
-                longitude=location["longitude"],
-                end_time=target_time,
-                hours=24
-            )
-        except Exception as e:
-            return ChatResponse(
-                response=f"Sorry, I couldn't fetch weather data for {location['city']}. The location might not have historical data available, or the requested time period is too far in the past. Error: {str(e)}",
-                location=location
-            )
+        use_daily_model = time_offset >= 18 and daily_model is not None
         
-        # Make prediction
-        prediction = predict_rainfall(model, weather_data)
-        
-        # Format response based on time context
-        time_context = _format_time_context(time_offset, target_time)
-        response_text = _format_prediction_response(
-            location["city"],
-            prediction,
-            time_context,
-            weather_df
-        )
+        if use_daily_model:
+            # Use daily model for tomorrow/future predictions
+            print(f"📅 Using DAILY model (time_offset={time_offset}h)")
+            
+            if daily_model is None:
+                return ChatResponse(
+                    response="Sorry, the daily prediction model is not available at the moment. Please try again later.",
+                    location=location
+                )
+            
+            try:
+                weather_data, weather_df = await fetch_daily_weather_data(
+                    latitude=location["latitude"],
+                    longitude=location["longitude"],
+                    days=30
+                )
+            except Exception as e:
+                return ChatResponse(
+                    response=f"Sorry, I couldn't fetch daily weather data for {location['city']}. Error: {str(e)}",
+                    location=location
+                )
+            
+            # Make prediction with daily model
+            prediction = predict_daily_rainfall(daily_model, weather_data)
+            
+            # Format response for daily prediction
+            response_text = _format_daily_prediction_response(
+                location["city"],
+                prediction,
+                weather_df
+            )
+            
+        else:
+            # Use hourly model for short-term predictions
+            print(f"⏰ Using HOURLY model (time_offset={time_offset}h)")
+            
+            if model is None:
+                return ChatResponse(
+                    response="Sorry, the hourly prediction model is not available at the moment. Please try again later.",
+                    location=location
+                )
+            
+            try:
+                weather_data, weather_df = await fetch_weather_data(
+                    latitude=location["latitude"],
+                    longitude=location["longitude"],
+                    end_time=target_time,
+                    hours=24
+                )
+            except Exception as e:
+                return ChatResponse(
+                    response=f"Sorry, I couldn't fetch weather data for {location['city']}. The location might not have historical data available, or the requested time period is too far in the past. Error: {str(e)}",
+                    location=location
+                )
+            
+            # Make prediction with hourly model
+            prediction = predict_rainfall(model, weather_data)
+            
+            # Format response based on time context
+            time_context = _format_time_context(time_offset, target_time)
+            response_text = _format_prediction_response(
+                location["city"],
+                prediction,
+                time_context,
+                weather_df
+            )
         
         return ChatResponse(
             response=response_text,
@@ -264,5 +319,127 @@ def _format_prediction_response(
         response += f"\n💡 Recommendation: Bring an umbrella!"
     elif chance >= 30:
         response += f"\n💡 Recommendation: You might want to carry an umbrella just in case."
+    
+    return response
+
+
+@app.post("/api/chat/daily")
+async def chat_daily(request: ChatRequest) -> ChatResponse:
+    """
+    Daily rainfall prediction endpoint using the global daily model.
+    
+    Predicts next day's rainfall based on past 30 days of weather data.
+    Uses Open-Meteo API for daily weather data.
+    """
+    try:
+        # Parse user query with NLP
+        parsed = await parse_user_query(request.message, request.current_location)
+        
+        location = parsed["location"]
+        needs_location = parsed["needs_location"]
+        
+        # Check if we need location
+        if needs_location and not location:
+            return ChatResponse(
+                response="I'd be happy to help with daily rainfall predictions! Which city would you like to know about?"
+            )
+        
+        # Use current location if no new location specified
+        if not location and request.current_location:
+            location = request.current_location
+        
+        if not location:
+            return ChatResponse(
+                response="Please specify a city for the daily rainfall prediction."
+            )
+        
+        # Check if daily model is loaded
+        if daily_model is None:
+            return ChatResponse(
+                response="Sorry, the daily prediction model is not available at the moment. Please try again later.",
+                location=location
+            )
+        
+        # Fetch daily weather data (past 30 days)
+        try:
+            weather_data, weather_df = await fetch_daily_weather_data(
+                latitude=location["latitude"],
+                longitude=location["longitude"],
+                days=30
+            )
+        except Exception as e:
+            return ChatResponse(
+                response=f"Sorry, I couldn't fetch daily weather data for {location['city']}. Error: {str(e)}",
+                location=location
+            )
+        
+        # Make prediction
+        prediction = predict_daily_rainfall(daily_model, weather_data)
+        
+        # Format response
+        response_text = _format_daily_prediction_response(
+            location["city"],
+            prediction,
+            weather_df
+        )
+        
+        return ChatResponse(
+            response=response_text,
+            location=location,
+            prediction=prediction
+        )
+        
+    except Exception as e:
+        print(f"Error in daily chat endpoint: {e}")
+        return ChatResponse(
+            response=f"Sorry, I encountered an error processing your request: {str(e)}"
+        )
+
+
+def _format_daily_prediction_response(
+    city: str,
+    prediction: Dict[str, Any],
+    weather_df: Any
+) -> str:
+    """Format the daily prediction into a natural language response."""
+    rain_mm = prediction["rain_mm"]
+    chance = prediction["chance_of_rain"]
+    
+    # Get latest weather conditions
+    latest = weather_df.iloc[-1]
+    temp_mean = latest["temp_mean_C"]
+    temp_max = latest["temp_max_C"]
+    temp_min = latest["temp_min_C"]
+    humidity = latest["rh_mean_pct"]
+    
+    # Build response
+    response = f"**Daily Rainfall Prediction for {city}** (Next Day)\n\n"
+    
+    # Rainfall prediction
+    if chance >= 70:
+        response += f"🌧️ **High chance of rain** ({chance}%)\n"
+        response += f"Expected daily rainfall: {rain_mm:.2f} mm\n\n"
+    elif chance >= 40:
+        response += f"🌦️ **Moderate chance of rain** ({chance}%)\n"
+        response += f"Expected daily rainfall: {rain_mm:.2f} mm\n\n"
+    elif chance >= 20:
+        response += f"⛅ **Low chance of rain** ({chance}%)\n"
+        response += f"Expected daily rainfall: {rain_mm:.2f} mm\n\n"
+    else:
+        response += f"☀️ **Very low chance of rain** ({chance}%)\n"
+        response += f"Expected daily rainfall: {rain_mm:.2f} mm\n\n"
+    
+    # Weather conditions
+    response += f"**Recent Conditions (Last Day):**\n"
+    response += f"• Temperature: {temp_mean:.1f}°C (Max: {temp_max:.1f}°C, Min: {temp_min:.1f}°C)\n"
+    response += f"• Humidity: {humidity:.0f}%\n"
+    
+    # Recommendation
+    if chance >= 60:
+        response += f"\n💡 Recommendation: Expect rain tomorrow, bring an umbrella!"
+    elif chance >= 30:
+        response += f"\n💡 Recommendation: There's a chance of rain tomorrow, consider bringing an umbrella."
+    else:
+        response += f"\n💡 Recommendation: Low chance of rain tomorrow, should be a nice day!"
     
     return response

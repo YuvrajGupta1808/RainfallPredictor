@@ -20,7 +20,10 @@ An AI-powered weather prediction chatbot that uses natural language processing t
   - Remembers your last queried location
   - Supports cities worldwide
 
-- **ML-Powered Predictions**: Uses a trained Transformer model for accurate rainfall predictions
+- **ML-Powered Predictions with Automatic Model Selection**: 
+  - **Hourly Model**: Transformer model for short-term rainfall predictions (< 18 hours)
+  - **Daily Model**: Global transformer model for next-day rainfall predictions (≥ 18 hours)
+  - **Smart Selection**: Automatically chooses the best model based on your query
 
 ## Architecture
 
@@ -68,7 +71,9 @@ GEMINI_API_KEY=your_api_key_here
 
 Get your API key from: https://makersuite.google.com/app/apikey
 
-6. Ensure `checkpoint_best.pt` model file is in the backend directory
+6. Ensure model files are in the backend directory:
+   - `checkpoint_best.pt` - Hourly prediction model
+   - `daily_transformer_global.pt` - Daily prediction model (optional)
 
 7. Start the server:
 ```bash
@@ -127,7 +132,7 @@ Once both servers are running, open http://localhost:5173 and try these queries:
 ## API Endpoints
 
 ### POST /api/chat
-Main chat endpoint for weather predictions.
+Main chat endpoint for hourly weather predictions.
 
 **Request:**
 ```json
@@ -158,6 +163,38 @@ Main chat endpoint for weather predictions.
 }
 ```
 
+### POST /api/chat/daily
+Daily rainfall prediction endpoint using the global daily model.
+
+**Request:**
+```json
+{
+  "message": "Will it rain tomorrow in London?",
+  "current_location": {
+    "city": "London",
+    "latitude": 51.5074,
+    "longitude": -0.1278
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Daily prediction text...",
+  "location": {
+    "city": "London",
+    "latitude": 51.5074,
+    "longitude": -0.1278
+  },
+  "prediction": {
+    "rain_mm": 5.2,
+    "rain_log": 1.75,
+    "chance_of_rain": 52.0
+  }
+}
+```
+
 ### GET /health
 Health check endpoint.
 
@@ -181,10 +218,19 @@ Health check endpoint.
 
 ## Model Details
 
-The rainfall prediction model is a Transformer-based architecture trained on historical weather data:
+### Hourly Prediction Model (`checkpoint_best.pt`)
+Transformer-based architecture for short-term rainfall prediction:
 - Input: 24 hours of weather features (temperature, humidity, pressure, wind, cloud cover)
 - Output: Rainfall prediction (mm/h) and probability
 - Features: 12 normalized features including cyclical time encodings
+
+### Daily Prediction Model (`daily_transformer_global.pt`)
+Global transformer model for next-day rainfall prediction:
+- Input: 30 days of daily weather features from Open-Meteo API
+- Output: Next day's rainfall prediction (mm/day) and probability
+- Features: 18 features including temperature, humidity, pressure, wind, precipitation lags, and location
+- Training: Trained on data from 32 cities worldwide for global coverage
+- Data Source: Open-Meteo API daily weather data
 
 ## Troubleshooting
 

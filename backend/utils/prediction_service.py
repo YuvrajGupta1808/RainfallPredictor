@@ -45,6 +45,34 @@ class MyRainModel(nn.Module):
         return prediction
 
 
+class RainfallTransformer(nn.Module):
+    """
+    Daily rainfall prediction model using Transformer.
+    Predicts next day's rainfall from past 30 days of weather data.
+    """
+    def __init__(self, input_dim=18, seq_len=30, d_model=128, nhead=4, num_layers=3, dropout=0.1):
+        super().__init__()
+        self.input_dim = input_dim
+        self.seq_len = seq_len
+        self.input_proj = nn.Linear(input_dim, d_model)
+        self.pos_embedding = nn.Parameter(torch.randn(1, seq_len, d_model))
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=4*d_model,
+            dropout=dropout, activation="gelu", batch_first=True)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.head = nn.Sequential(
+            nn.LayerNorm(d_model), nn.Linear(d_model, 128), nn.GELU(),
+            nn.Dropout(dropout), nn.Linear(128, 1))
+
+    def forward(self, x):
+        if x.size(1) > self.seq_len:
+            x = x[:, -self.seq_len:, :]
+        x_proj = self.input_proj(x) + self.pos_embedding[:, :x.size(1)]
+        enc = self.encoder(x_proj)
+        pooled = enc.mean(dim=1)
+        return self.head(pooled).squeeze(-1)
+
+
 def load_model(checkpoint_path: str = "checkpoint_best.pt") -> MyRainModel:
     """
     Load the trained model from checkpoint.
@@ -56,6 +84,23 @@ def load_model(checkpoint_path: str = "checkpoint_best.pt") -> MyRainModel:
         Loaded model in evaluation mode
     """
     model = MyRainModel()
+    model.load_state_dict(torch.load(checkpoint_path, map_location=torch.device('cpu')))
+    model.eval()
+    return model
+
+
+def load_daily_model(checkpoint_path: str = "daily_transformer_global.pt", input_dim: int = 18) -> RainfallTransformer:
+    """
+    Load the trained daily rainfall prediction model from checkpoint.
+    
+    Args:
+        checkpoint_path: Path to the model checkpoint file
+        input_dim: Number of input features (default: 18)
+    
+    Returns:
+        Loaded model in evaluation mode
+    """
+    model = RainfallTransformer(input_dim=input_dim)
     model.load_state_dict(torch.load(checkpoint_path, map_location=torch.device('cpu')))
     model.eval()
     return model
@@ -88,6 +133,41 @@ def predict_rainfall(model: MyRainModel, weather_sequence: List[List[float]]) ->
     # Calculate chance of rain (%)
     # Cap at 100% for values above threshold
     chance_of_rain = min(rain_mm * 20, 100)
+    
+    return {
+        "rain_mm": round(rain_mm, 3),
+        "rain_log": round(y_log, 3),
+        "chance_of_rain": round(chance_of_rain, 1)
+    }
+
+
+def predict_daily_rainfall(model: RainfallTransformer, daily_sequence: List[List[float]]) -> dict:
+    """
+    Predict next day's rainfall from past 30 days of weather data.
+    
+    Args:
+        model: Trained daily rainfall prediction model
+        daily_sequence: 2D list of shape (30, 18) with daily weather features
+    
+    Returns:
+        Dictionary with prediction results:
+        - rain_mm: Predicted daily rainfall in mm
+        - rain_log: Log-transformed prediction value
+        - chance_of_rain: Probability of rain (0-100%)
+    """
+    # Convert to tensor: shape (1, 30, 18)
+    x = torch.tensor(daily_sequence, dtype=torch.float32).unsqueeze(0)
+    
+    # Run prediction (no gradient needed)
+    with torch.no_grad():
+        y_log = model(x).item()
+    
+    # Convert log prediction to actual rainfall (mm/day)
+    rain_mm = torch.expm1(torch.tensor(y_log)).item()
+    
+    # Calculate chance of rain (%)
+    # For daily predictions, use different scaling
+    chance_of_rain = min(rain_mm * 10, 100)
     
     return {
         "rain_mm": round(rain_mm, 3),
