@@ -11,37 +11,36 @@ from typing import Optional
 from timezonefinder import TimezoneFinder
 
 # Feature normalization constants (mean and std for each feature)
-# Order: temperature_2m, relative_humidity_2m, surface_pressure, 
-#        wind_speed_10m, wind_direction_10m, cloud_cover,
-#        hour, month, hour_sin, hour_cos, month_sin, month_cos
+# Source: Rain_Predict.ipynb - WeatherDataset normalization
+# These values MUST match the actual training statistics for accurate predictions
 FEATURE_MEAN = np.array([
-    15.0,   # temperature_2m (°C)
-    60.0,   # relative_humidity_2m (%)
-    1013.0, # surface_pressure (hPa)
-    10.0,   # wind_speed_10m (km/h)
-    180.0,  # wind_direction_10m (degrees)
-    50.0,   # cloud_cover (%)
-    11.5,   # hour (0-23)
-    6.5,    # month (1-12)
-    0.0,    # hour_sin
-    0.0,    # hour_cos
-    0.0,    # month_sin
-    0.0     # month_cos
+    18.567550,  # temperature_2m
+    79.598977,  # relative_humidity_2m
+    981.734487,  # surface_pressure
+    13.426167,  # wind_speed_10m
+    180.436398,  # wind_direction_10m
+    76.828996,  # cloud_cover
+    10.461718,  # hour
+    6.604840,  # month
+    0.086513,  # hour_sin
+    0.018876,  # hour_cos
+    -0.041129,  # month_sin
+    -0.029438,  # month_cos
 ])
 
 FEATURE_STD = np.array([
-    10.0,   # temperature_2m
-    25.0,   # relative_humidity_2m
-    10.0,   # surface_pressure
-    5.0,    # wind_speed_10m
-    100.0,  # wind_direction_10m
-    35.0,   # cloud_cover
-    6.9,    # hour
-    3.5,    # month
-    0.7,    # hour_sin
-    0.7,    # hour_cos
-    0.7,    # month_sin
-    0.7     # month_cos
+    8.906159,  # temperature_2m
+    17.339595,  # relative_humidity_2m
+    58.390520,  # surface_pressure
+    8.304077,  # wind_speed_10m
+    100.490628,  # wind_direction_10m
+    34.575687,  # cloud_cover
+    6.929337,  # hour
+    3.370372,  # month
+    0.694793,  # hour_sin
+    0.713743,  # hour_cos
+    0.705697,  # month_sin
+    0.706712,  # month_cos
 ])
 
 
@@ -440,49 +439,50 @@ async def fetch_daily_weather_data(
     # Extract feature values as numpy array
     weather_data_array = df[feature_columns].values
     
-    # Global normalization statistics (calculated from training data)
+    # Global normalization statistics (calculated from actual training data)
     # These values represent the mean and std across all 32 cities and all days
-    # in the training dataset. They must match the values used during training.
+    # in the training dataset. They MUST match the values used during training.
+    # Source: train_daily_global.ipynb - DailyWeatherDataset normalization
     DAILY_FEATURE_MEAN = np.array([
-        15.0,   # temp_mean_C - Average temperature across all cities/days
-        20.0,   # temp_max_C - Average daily maximum temperature
-        10.0,   # temp_min_C - Average daily minimum temperature
-        65.0,   # rh_mean_pct - Average relative humidity
-        1013.0, # press_mean_hPa - Average surface pressure
-        3.5,    # wind_mean_ms - Average wind speed
-        180.0,  # wind_dir_deg - Average wind direction
-        50.0,   # cloud_mean_pct - Average cloud cover
-        8.0,    # dew_point_C - Average dew point
-        6.5,    # month - Average month (1-12)
-        0.0,    # month_sin - Cyclical encoding (mean ~0)
-        0.0,    # month_cos - Cyclical encoding (mean ~0)
-        2.0,    # precip_lag_1 - Average precipitation 1 day ago
-        2.0,    # precip_lag_3 - Average precipitation 3 days ago
-        15.0,   # temp_mean_lag_1 - Average temperature 1 day ago
-        2.0,    # precip_roll7 - Average 7-day rolling precipitation
-        30.0,   # lat - Average latitude (global coverage)
-        0.0     # lon - Average longitude (global coverage)
+        17.690649,  # temp_mean_C
+        22.175192,  # temp_max_C
+        13.691782,  # temp_min_C
+        70.736133,  # rh_mean_pct
+        980.025519,  # press_mean_hPa
+        12.122129,  # wind_mean_ms
+        182.872156,  # wind_dir_deg
+        54.612120,  # cloud_mean_pct
+        11.659492,  # dew_point_C
+        6.527797,  # month
+        -0.005155,  # month_sin
+        -0.002580,  # month_cos
+        2.730745,  # precip_lag_1
+        2.730892,  # precip_lag_3
+        17.690715,  # temp_mean_lag_1
+        2.730650,  # precip_roll7
+        17.755460,  # lat
+        32.447264,  # lon
     ])
     
     DAILY_FEATURE_STD = np.array([
-        10.0,   # temp_mean_C - Temperature varies ±10°C globally
-        10.0,   # temp_max_C
-        10.0,   # temp_min_C
-        20.0,   # rh_mean_pct - Humidity varies ±20%
-        15.0,   # press_mean_hPa - Pressure varies ±15 hPa
-        2.0,    # wind_mean_ms - Wind speed varies ±2 m/s
-        100.0,  # wind_dir_deg - Wind direction varies widely
-        30.0,   # cloud_mean_pct - Cloud cover varies ±30%
-        8.0,    # dew_point_C - Dew point varies ±8°C
-        3.5,    # month - Month varies across year
-        0.7,    # month_sin - Cyclical encoding std
-        0.7,    # month_cos - Cyclical encoding std
-        5.0,    # precip_lag_1 - Precipitation varies ±5mm
-        5.0,    # precip_lag_3
-        10.0,   # temp_mean_lag_1 - Temperature lag varies ±10°C
-        4.0,    # precip_roll7 - Rolling precipitation varies ±4mm
-        30.0,   # lat - Latitude varies globally (-90 to 90)
-        80.0    # lon - Longitude varies globally (-180 to 180)
+        9.452089,  # temp_mean_C
+        9.800639,  # temp_max_C
+        9.563012,  # temp_min_C
+        16.921566,  # rh_mean_pct
+        60.937263,  # press_mean_hPa
+        5.450900,  # wind_mean_ms
+        71.165108,  # wind_dir_deg
+        32.422023,  # cloud_mean_pct
+        9.410852,  # dew_point_C
+        3.446803,  # month
+        0.705923,  # month_sin
+        0.708271,  # month_cos
+        7.046086,  # precip_lag_1
+        7.046207,  # precip_lag_3
+        9.451733,  # temp_mean_lag_1
+        4.319350,  # precip_roll7
+        29.812270,  # lat
+        83.791498,  # lon
     ])
         
     # Apply normalization using global statistics
