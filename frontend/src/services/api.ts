@@ -2,7 +2,10 @@
  * API service for communicating with the backend
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In production, use relative URLs since frontend and backend are served from same domain
+// In development, use localhost backend
+const API_BASE_URL = import.meta.env.VITE_API_URL ||
+    (import.meta.env.PROD ? '' : 'http://localhost:8000');
 
 export interface ChatRequest {
     message: string;

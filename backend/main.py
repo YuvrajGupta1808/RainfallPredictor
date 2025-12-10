@@ -1,9 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime
 from timezonefinder import TimezoneFinder
+import os
 
 from utils.nlp_service import parse_user_query, calculate_target_time
 from utils.weather_service import fetch_weather_data, fetch_daily_weather_data
@@ -19,18 +22,18 @@ if GEMINI_API_KEY:
 
 app = FastAPI(title="Weather Prediction Chat Backend")
 
-# Configure CORS for localhost origins
+# Configure CORS - allow all origins in production, specific origins in development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-    ],
+    allow_origins=["*"],  # In production, you might want to restrict this
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files (frontend build)
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Load models at startup
 model = None
@@ -70,7 +73,15 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    """Health check endpoint with model status."""
+    return {
+        "status": "healthy",
+        "models": {
+            "hourly_model": "loaded" if model is not None else "not_loaded",
+            "daily_model": "loaded" if daily_model is not None else "not_loaded"
+        },
+        "gemini_api": "configured" if GEMINI_API_KEY else "not_configured"
+    }
 
 
 @app.post("/api/chat")
@@ -443,3 +454,18 @@ def _format_daily_prediction_response(
         response += f"\n💡 Recommendation: Low chance of rain tomorrow, should be a nice day!"
     
     return response
+
+
+# Serve frontend for all other routes (SPA routing)
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """Serve the React frontend for all non-API routes."""
+    # Don't serve frontend for API routes
+    if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc"):
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # Serve index.html for all frontend routes
+    if os.path.exists("static/index.html"):
+        return FileResponse("static/index.html")
+    else:
+        raise HTTPException(status_code=404, detail="Frontend not found")

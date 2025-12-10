@@ -1,0 +1,27 @@
+# Node modules
+frontend/node_modules
+frontend/.next
+frontend/dist
+
+# Python
+backend/__pycache__
+backend/venv
+backend/.env
+
+# Git
+.git
+.gitignore
+
+# Training notebooks
+training/
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
